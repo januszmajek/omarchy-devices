@@ -1,20 +1,24 @@
 # Devices — an Omarchy bar plugin
 
 Battery levels and settings for every wireless device on your desk, in one
-panel, however it is connected:
+panel, however it is connected. Each device is labelled with how it reaches
+the computer: **Bolt Receiver** / **Unifying Receiver**, **USB dongle** or
+**Bluetooth**.
 
 - **Logitech Bolt / Unifying receivers** — battery, plus DPI, SmartShift,
   ratchet/free-spin, scroll direction, high-resolution scrolling, keyboard
   backlight, Fn-key swap and OS layout (whatever the device supports)
 - **USB headset dongles** (Logitech G PRO X and anything else
   [HeadsetControl](https://github.com/Sapd/HeadsetControl) supports) — battery,
-  sidetone, auto power-off
-- **Bluetooth** — controllers, earbuds, keyboards: connect, disconnect, forget,
-  scan and pair, battery when the device reports it, and the Bluetooth power
-  switch
+  sidetone, auto power-off, and whether the microphone is muted
+- **Bluetooth** — paired controllers, earbuds and keyboards with their
+  connection state and battery, when the device reports it. Connecting,
+  pairing and the Bluetooth switch stay in Omarchy's Bluetooth widget.
 
-The bar shows the device with the lowest battery (devices on the charger are
-ranked last) and turns the urgent colour below the warning level.
+The bar shows a single icon. When any device drops to the warning level
+(20% by default) it turns the urgent colour and gains a battery-alert mark,
+the tooltip names the devices that are low, and a notification appears once
+per device. It repeats only after that device has charged or recovered.
 
 ![Devices panel](preview.png)
 
@@ -45,8 +49,16 @@ Move it on the bar with `omarchy bar move januszmajek.devices --section right`.
 - **Click** the bar icon to open the panel, **right-click** to refresh.
 - **Click a receiver or dongle device** to show its settings. Changes apply
   immediately.
-- **Click a Bluetooth device** to connect or disconnect it; hover for the
-  forget button. The magnifier scans for new devices; click one to pair.
+
+### Headset microphone
+
+For an online USB headset the panel shows whether its microphone is muted.
+The system mute (PipeWire) is always shown. Many headsets — the Logitech PRO X
+Wireless among them — mute inside the headset when you press the button or
+flip the boom and never tell the computer, so for those the panel reads
+"Mic on (system)" rather than claiming the mic is live.
+
+### Saved settings
 
 Settings you change are saved to
 `~/.local/state/omarchy-devices/settings.json` and written again whenever the
@@ -64,8 +76,7 @@ Inline on the widget's entry in `~/.config/omarchy/shell.json`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `lowBattery` | `20` | At or below this percentage the bar turns the urgent colour |
-| `showPercent` | `true` | Show the lowest battery percentage next to the icon |
+| `lowBattery` | `20` | At or below this percentage the bar warns and a notification is sent |
 
 ## How it works
 
@@ -73,8 +84,9 @@ Inline on the widget's entry in `~/.config/omarchy/shell.json`:
 monitors. The helper uses Solaar's `logitech_receiver` library and
 `headsetcontrol`, prints a JSON state line on every change or every 30
 seconds, and takes JSON commands on stdin. `Panel.qml` is the bar widget and
-popup; Bluetooth comes straight from Quickshell's BlueZ bindings and Omarchy's
-`omarchy-bluetooth-device` / `omarchy-bluetooth-power` helpers.
+popup. Bluetooth devices and the headset's PipeWire microphone come straight
+from Quickshell's BlueZ and PipeWire bindings in the service, which also sends
+the low-battery notifications so they fire once, not once per monitor.
 
 Run the helper on its own to see what it sees:
 

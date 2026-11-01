@@ -1,7 +1,9 @@
 .pragma library
 
-// Nerd Font (Material Design) glyphs per device kind.
+// Nerd Font (Material Design) glyphs.
 var ICONS = {
+  devices: 0xF0FB0,
+  batteryAlert: 0xF0083,
   mouse: 0xF037D,
   keyboard: 0xF030C,
   headset: 0xF02CE,
@@ -9,7 +11,9 @@ var ICONS = {
   gamepad: 0xF02B4,
   phone: 0xF011C,
   speaker: 0xF04C3,
-  device: 0xF00AF
+  device: 0xF00AF,
+  mic: 0xF036C,
+  micOff: 0xF036D
 }
 
 function icon(kind) {
@@ -20,13 +24,6 @@ function icon(kind) {
 function deviceLabel(device) {
   if (!device) return ""
   return String(device.deviceName || device.name || "").trim()
-}
-
-function hasHumanName(device) {
-  var label = deviceLabel(device)
-  return label !== ""
-    && !/^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(label)
-    && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(label)
 }
 
 // BlueZ reports a freedesktop icon name (input-gaming, audio-headphones, ...);
@@ -44,43 +41,98 @@ function bluetoothKind(device) {
   return "device"
 }
 
-function percent(level) {
-  return Math.round(level) + "%"
-}
-
-function helperStatus(dev) {
-  if (!dev.online) return dev.connection + " · offline"
-  var parts = [dev.connection]
-  if (dev.battery !== null && dev.battery !== undefined) parts.push(percent(dev.battery))
-  if (dev.charging) parts.push("charging")
-  return parts.join(" · ")
-}
-
-function bluetoothStatus(dev, pending) {
-  if (pending === "connect" || pending === "pair" || dev.pairing) return "Connecting…"
-  if (pending === "disconnect") return "Disconnecting…"
-  if (pending === "forget") return "Forgetting…"
-  if (!dev.connected) return dev.paired || dev.bonded || dev.trusted ? "Not connected" : ""
-  var parts = ["Connected"]
-  if (dev.batteryAvailable) parts.push(percent(dev.battery * 100))
-  return parts.join(" · ")
-}
-
-// Every battery reading we have, lowest first, as { name, kind, level, charging }.
-function batteries(helperDevices, btDevices) {
+// Helper devices plus paired Bluetooth devices in one list: online first,
+// then by name. Bluetooth objects are copied into plain values so rows never
+// hold live BlueZ wrappers.
+function mergeDevices(helperDevices, btDevices, micStates) {
   var list = []
   for (var i = 0; i < helperDevices.length; i++) {
-    var h = helperDevices[i]
-    if (h.online && h.battery !== null && h.battery !== undefined)
-      list.push({ name: h.name, kind: h.kind, level: h.battery, charging: h.charging })
+    var h = Object.assign({}, helperDevices[i])
+    h.mic = micStates[h.id] || null
+    if (h.mic && h.micHardwareMuted !== undefined) h.mic.hardwareMuted = h.micHardwareMuted
+    list.push(h)
   }
   for (var j = 0; j < btDevices.length; j++) {
     var b = btDevices[j]
-    if (b && b.connected && b.batteryAvailable)
-      list.push({ name: deviceLabel(b), kind: bluetoothKind(b), level: Math.round(b.battery * 100), charging: false })
+    if (!b || !(b.paired || b.bonded || b.trusted)) continue
+    list.push({
+      id: b.address,
+      source: "bluetooth",
+      name: deviceLabel(b) || b.address,
+      kind: bluetoothKind(b),
+      connection: "Bluetooth",
+      online: !!b.connected,
+      battery: b.connected && b.batteryAvailable ? Math.round(b.battery * 100) : null,
+      charging: false,
+      settings: [],
+      mic: null
+    })
   }
-  // Devices on the charger go last: the bar should warn about the one that
-  // is actually running down.
+  list.sort(function(a, b) {
+    return (b.online - a.online) || a.name.localeCompare(b.name)
+  })
+  return list
+}
+
+// Every battery reading, devices on the charger last and the rest lowest
+// first, as { id, name, kind, connection, level, charging }.
+function batteries(devices) {
+  var list = []
+  for (var i = 0; i < devices.length; i++) {
+    var d = devices[i]
+    if (d.online && d.battery !== null && d.battery !== undefined)
+      list.push({ id: d.id, name: d.name, kind: d.kind, connection: d.connection, level: d.battery, charging: d.charging })
+  }
   list.sort(function(a, b) { return (a.charging - b.charging) || (a.level - b.level) })
   return list
+}
+
+// The PipeWire capture node belonging to a USB headset, matched by name.
+function sourceNodeFor(headset, nodes) {
+  var want = String(headset.name || "").toLowerCase()
+  if (!want) return null
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i]
+    if (!n || n.isSink || n.isStream || !n.audio) continue
+    var text = (String(n.description || "") + " " + String(n.nickname || "") + " " + String(n.name || "")).toLowerCase()
+    if (text.indexOf(want) >= 0) return n
+  }
+  return null
+}
+
+function status(dev) {
+  if (!dev.online) return "Not connected"
+  var parts = []
+  if (dev.battery !== null && dev.battery !== undefined) parts.push(Math.round(dev.battery) + "%")
+  if (dev.charging) parts.push("charging")
+  return parts.length ? parts.join(" · ") : "Connected"
+}
+
+// Muted by the headset button, in the system, both, or live. Many headsets
+// (the Logitech PRO X Wireless among them) mute inside the headset without
+// telling the computer; then hardwareMuted is undefined and only the system
+// state is claimed.
+function micText(mic) {
+  if (!mic) return ""
+  var sys = mic.systemMuted === true
+  if (mic.hardwareMuted === undefined || mic.hardwareMuted === null)
+    return sys ? "Mic muted (system)" : "Mic on (system)"
+  var hw = mic.hardwareMuted === true
+  if (hw && sys) return "Mic muted · headset button + system"
+  if (hw) return "Mic muted · headset button"
+  if (sys) return "Mic muted · system"
+  return "Mic live"
+}
+
+function micMuted(mic) {
+  return !!mic && (mic.hardwareMuted === true || mic.systemMuted === true)
+}
+
+// One line: the bar's tooltip window does not grow for multi-line text.
+function tooltip(lowDevices, batteries) {
+  if (lowDevices.length)
+    return "Low battery: " + lowDevices.map(function(d) { return d.name + " " + d.level + "%" }).join(", ")
+  if (batteries.length)
+    return "Devices · lowest: " + batteries[0].name + " " + batteries[0].level + "%"
+  return "Devices"
 }

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "januszmajek.devices",
   "name": "Devices",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Janusz Majek",
   "description": "Battery and settings for wireless mice, keyboards, headsets and controllers: Bluetooth, Logitech Bolt/Unifying receivers and USB headset dongles",
   "kinds": ["service", "bar-widget"],
@@ -13,14 +13,13 @@
   },
   "barWidget": {
     "displayName": "Devices",
-    "description": "Battery levels and settings for your wireless devices",
+    "description": "Low-battery indicator, plus battery and settings for your wireless devices",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": { "lowBattery": 20, "showPercent": true },
+    "defaults": { "lowBattery": 20 },
     "schema": [
-      { "key": "lowBattery", "type": "integer", "label": "Low battery warning (%)" },
-      { "key": "showPercent", "type": "boolean", "label": "Show lowest battery percentage on the bar" }
+      { "key": "lowBattery", "type": "integer", "label": "Low battery warning (%)" }
     ]
   }
 }

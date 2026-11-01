@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import Quickshell
-import Quickshell.Bluetooth
 import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
@@ -17,91 +16,42 @@ Panel {
   readonly property var pluginShell: bar && bar.shell ? bar.shell : null
   readonly property var service: pluginShell && typeof pluginShell.serviceFor === "function"
     ? pluginShell.serviceFor("januszmajek.devices") : null
-  readonly property var helperDevices: service ? service.devices : []
-  readonly property var helperErrors: service ? service.errors : []
 
-  readonly property var adapter: Bluetooth.defaultAdapter
-  readonly property var btDevices: Bluetooth.devices ? Bluetooth.devices.values : []
-  readonly property var btPaired: btDevices.filter(d => d.paired || d.bonded || d.trusted)
-  readonly property var btDiscovered: btDevices.filter(d => !(d.paired || d.bonded || d.trusted) && Model.hasHumanName(d))
-
+  readonly property var devices: service ? service.devices : []
+  readonly property var batteries: service ? service.batteries : []
+  readonly property var lowDevices: service ? service.lowDevices : []
+  readonly property bool low: lowDevices.length > 0
   readonly property int lowBattery: Number(setting("lowBattery", 20))
-  readonly property var batteries: Model.batteries(helperDevices, btDevices)
-  readonly property var weakest: batteries.length ? batteries[0] : null
-  readonly property bool low: weakest !== null && weakest.level <= lowBattery
 
-  // Which helper device has its settings open.
+  // Which device has its settings open.
   property string expandedId: ""
-  // True while this panel owes BlueZ a StopDiscovery (see the Bluetooth panel).
-  property bool owesDiscoveryStop: false
-  property var pendingBt: ({})
 
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Commons.Color.accent) : "transparent"
   readonly property color dimmed: bar ? Qt.darker(bar.foreground, 1.5) : "gray"
 
-  visible: helperDevices.length > 0 || btPaired.length > 0
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  function btAction(device, action) {
-    if (!device || !device.address) return
-    var next = Object.assign({}, pendingBt)
-    next[device.address] = action
-    pendingBt = next
-    pendingBtClear.restart()
-    Quickshell.execDetached(["omarchy-bluetooth-device", action, device.address])
+  Binding {
+    target: root.service
+    when: root.service !== null
+    property: "lowBattery"
+    value: root.lowBattery
   }
 
-  function toggleBt(device) {
-    if (device.connected) btAction(device, "disconnect")
-    else btAction(device, device.paired || device.bonded || device.trusted ? "connect" : "pair")
-  }
+  onOpenedChanged: if (opened && service) service.refresh()
 
-  function setScanning(on) {
-    if (!adapter) return
-    if (on) owesDiscoveryStop = true
-    adapter.discovering = on
-  }
-
-  onOpenedChanged: {
-    if (opened) {
-      if (service) service.refresh()
-    } else if (owesDiscoveryStop && adapter && adapter.discovering) {
-      adapter.discovering = false
-      owesDiscoveryStop = false
-    }
-  }
-
-  onBtDevicesChanged: {
-    // Drop pending labels once BlueZ reports the result.
-    var next = Object.assign({}, pendingBt), changed = false
-    for (var address in next) {
-      var d = btDevices.find(x => x.address === address)
-      var action = next[address]
-      if (!d || (action === "connect" && d.connected) || (action === "pair" && d.connected)
-          || (action === "disconnect" && !d.connected) || (action === "forget" && !d.paired)) {
-        delete next[address]
-        changed = true
-      }
-    }
-    if (changed) pendingBt = next
-  }
-
-  Timer {
-    id: pendingBtClear
-    interval: 20000
-    onTriggered: root.pendingBt = ({})
+  function isLow(dev) {
+    return dev.online && !dev.charging && dev.battery !== null && dev.battery !== undefined && dev.battery <= lowBattery
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: Model.icon(root.weakest ? root.weakest.kind : "mouse")
-      + (root.weakest && root.setting("showPercent", true) ? " " + root.weakest.level + "%" : "")
+    text: Model.icon("devices") + (root.low ? " " + Model.icon("batteryAlert") : "")
     active: root.low
-    tooltipText: root.batteries.map(b => b.name + ": " + b.level + "%" + (b.charging ? " (charging)" : "")).join("\n")
-      || "Devices"
+    tooltipText: Model.tooltip(root.lowDevices, root.batteries)
     onPressed: function(b) {
       if (b === Qt.RightButton) { if (root.service) root.service.refresh() }
       else root.toggle()
@@ -146,8 +96,8 @@ Panel {
               id: heroIcon
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
-              text: Model.icon("mouse")
-              color: root.bar.foreground
+              text: Model.icon("devices")
+              color: root.low ? root.bar.urgent : root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.display
             }
@@ -168,10 +118,10 @@ Panel {
                 font.bold: true
               }
               Text {
-                text: (!root.service ? "SERVICE NOT RUNNING"
+                text: !root.service ? "SERVICE NOT RUNNING"
+                  : root.low ? root.lowDevices.length + " LOW ON BATTERY"
                   : !root.service.ready ? "SCANNING…"
-                  : root.weakest ? "LOWEST: " + root.weakest.name.toUpperCase() + " " + root.weakest.level + "%"
-                  : "NO BATTERY READINGS")
+                  : root.devices.filter(d => d.online).length + " CONNECTED"
                 color: root.low ? root.bar.urgent : root.dimmed
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -198,7 +148,7 @@ Panel {
             visible: text !== ""
             width: parent.width
             wrapMode: Text.WordWrap
-            text: [root.service ? root.service.lastError : ""].concat(root.helperErrors).filter(e => e).join("\n")
+            text: root.service ? [root.service.lastError].concat(root.service.errors).filter(e => e).join("\n") : ""
             color: root.bar.urgent
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -206,139 +156,152 @@ Panel {
 
           PanelSeparator { foreground: root.bar.foreground }
 
-          // ---------- Receivers and USB dongles ----------
-          PanelSectionHeader {
-            visible: root.helperDevices.length > 0
-            text: "RECEIVERS & DONGLES"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-          }
-
           Repeater {
-            model: root.helperDevices
-            HelperDeviceRow {
+            model: root.devices
+            DeviceRow {
               required property var modelData
               width: column.width
               dev: modelData
             }
           }
 
-          PanelSeparator {
-            visible: root.helperDevices.length > 0 && !!root.adapter
-            foreground: root.bar.foreground
-          }
-
-          // ---------- Bluetooth ----------
-          Item {
-            visible: !!root.adapter
-            width: parent.width
-            implicitHeight: Math.max(btHeader.implicitHeight, btSwitch.implicitHeight)
-
-            PanelSectionHeader {
-              id: btHeader
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "BLUETOOTH"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-            }
-
-            PanelActionButton {
-              anchors.right: btSwitch.left
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              visible: root.adapter && root.adapter.enabled
-              iconText: root.adapter && root.adapter.discovering ? "󰓛" : "󰍉"
-              tooltipText: root.adapter && root.adapter.discovering ? "Stop scanning" : "Scan for new devices"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              onClicked: root.setScanning(!(root.adapter && root.adapter.discovering))
-            }
-
-            ToggleSwitch {
-              id: btSwitch
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              checked: !!root.adapter && root.adapter.enabled
-              foreground: root.bar.foreground
-              onToggled: Quickshell.execDetached(["omarchy-bluetooth-power", root.adapter.enabled ? "off" : "on"])
-            }
-          }
-
-          Repeater {
-            model: root.adapter && root.adapter.enabled ? root.btPaired : []
-            BluetoothRow {
-              required property var modelData
-              width: column.width
-              dev: modelData
-            }
-          }
-
-          PanelSectionHeader {
-            visible: root.adapter && root.adapter.discovering
-            text: root.btDiscovered.length ? "AVAILABLE — CLICK TO PAIR" : "SCANNING…"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-          }
-
-          Repeater {
-            model: root.adapter && root.adapter.discovering ? root.btDiscovered : []
-            BluetoothRow {
-              required property var modelData
-              width: column.width
-              dev: modelData
-            }
+          Text {
+            visible: root.devices.length === 0
+            text: root.service && !root.service.ready ? "Looking for devices…" : "No wireless devices found"
+            color: root.dimmed
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
           }
         }
       }
     }
   }
 
-  // ---------- Row for a receiver / dongle device, with its settings ----------
-  component HelperDeviceRow: Column {
-    id: hrow
+  // ---------- One device, with its settings when expanded ----------
+  component DeviceRow: Column {
+    id: drow
     required property var dev
-    readonly property bool expanded: root.expandedId === dev.id
+    readonly property bool expandable: dev.settings.length > 0
+    readonly property bool expanded: expandable && root.expandedId === dev.id
+    readonly property bool lowNow: root.isLow(dev)
     spacing: Style.space(6)
 
     CursorSurface {
       width: parent.width
-      implicitHeight: hcontent.implicitHeight + Style.spacing.rowPaddingX
+      implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
       foreground: root.bar.foreground
       fill: root.hoverFill
-      hasCursor: hmouse.containsMouse
-      current: hrow.expanded
+      hasCursor: rowMouse.containsMouse
+      current: drow.expanded
 
       MouseArea {
-        id: hmouse
+        id: rowMouse
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: hrow.dev.settings.length ? Qt.PointingHandCursor : Qt.ArrowCursor
-        onClicked: root.expandedId = hrow.expanded ? "" : hrow.dev.id
+        cursorShape: drow.expandable ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: if (drow.expandable) root.expandedId = drow.expanded ? "" : drow.dev.id
       }
 
-      DeviceLine {
-        id: hcontent
+      Item {
+        id: rowContent
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        anchors.margins: Style.space(10)
-        icon: Model.icon(hrow.dev.kind)
-        name: hrow.dev.name
-        status: Model.helperStatus(hrow.dev)
-        online: hrow.dev.online
-        trailing: hrow.dev.settings.length ? (hrow.expanded ? "󰅀" : "󰅂") : ""
+        anchors.leftMargin: Style.space(10)
+        anchors.rightMargin: Style.space(10)
+        implicitHeight: Math.max(kindIcon.implicitHeight, info.implicitHeight, badge.implicitHeight)
+
+        Text {
+          id: kindIcon
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(26)
+          text: Model.icon(drow.dev.kind)
+          color: drow.lowNow ? root.bar.urgent : drow.dev.online ? root.bar.foreground : root.dimmed
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.heading
+        }
+
+        Column {
+          id: info
+          anchors.left: kindIcon.right
+          anchors.leftMargin: Style.space(8)
+          anchors.right: badge.left
+          anchors.rightMargin: Style.space(8)
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(1)
+
+          Text {
+            text: drow.dev.name
+            color: drow.dev.online ? root.bar.foreground : root.dimmed
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+            width: parent.width
+          }
+          Text {
+            text: Model.status(drow.dev)
+            color: drow.lowNow ? root.bar.urgent : root.dimmed
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: drow.lowNow
+            elide: Text.ElideRight
+            width: parent.width
+          }
+          Text {
+            visible: drow.dev.online && !!drow.dev.mic
+            text: (Model.micMuted(drow.dev.mic) ? Model.icon("micOff") : Model.icon("mic")) + " " + Model.micText(drow.dev.mic)
+            color: Model.micMuted(drow.dev.mic) ? root.bar.urgent : root.dimmed
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+            width: parent.width
+          }
+        }
+
+        // How the device reaches this computer.
+        Rectangle {
+          id: badge
+          anchors.right: chevron.left
+          anchors.rightMargin: chevron.text ? Style.space(8) : 0
+          anchors.verticalCenter: parent.verticalCenter
+          implicitWidth: badgeText.implicitWidth + Style.space(12)
+          implicitHeight: badgeText.implicitHeight + Style.space(4)
+          radius: Style.cornerRadius > 0 ? height / 2 : 0
+          color: "transparent"
+          border.width: 1
+          border.color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.25)
+
+          Text {
+            id: badgeText
+            anchors.centerIn: parent
+            text: drow.dev.connection
+            color: root.dimmed
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        Text {
+          id: chevron
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          text: drow.expandable ? (drow.expanded ? "󰅀" : "󰅂") : ""
+          color: root.dimmed
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+        }
       }
     }
 
     Column {
-      visible: hrow.expanded
+      visible: drow.expanded
       width: parent.width - Style.space(20)
       x: Style.space(20)
       spacing: Style.space(8)
 
       Text {
-        visible: !hrow.dev.online
+        visible: !drow.dev.online
         text: "Turn the device on or move it to change its settings."
         color: root.dimmed
         font.family: root.bar.fontFamily
@@ -348,13 +311,13 @@ Panel {
       }
 
       Repeater {
-        model: hrow.expanded ? hrow.dev.settings : []
+        model: drow.expanded ? drow.dev.settings : []
         SettingRow {
           required property var modelData
           width: parent.width
-          dev: hrow.dev
+          dev: drow.dev
           setting: modelData
-          enabled: hrow.dev.online
+          enabled: drow.dev.online
           opacity: enabled ? 1 : 0.5
         }
       }
@@ -432,118 +395,6 @@ Panel {
         value: Number(srow.value)
         onReleased: function(v) { if (Math.round(v) !== Number(srow.value)) root.service.setValue(srow.dev, srow.setting.name, Math.round(v)) }
       }
-    }
-  }
-
-  // ---------- Bluetooth device row ----------
-  component BluetoothRow: CursorSurface {
-    id: brow
-    required property var dev
-    readonly property string pendingAction: root.pendingBt[dev.address] || ""
-    readonly property bool known: dev.paired || dev.bonded || dev.trusted
-    implicitHeight: bcontent.implicitHeight + Style.spacing.rowPaddingX
-    foreground: root.bar.foreground
-    fill: root.hoverFill
-    hasCursor: bmouse.containsMouse
-    current: dev.connected
-
-    MouseArea {
-      id: bmouse
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: root.toggleBt(brow.dev)
-    }
-
-    PanelToolTip {
-      visible: bmouse.containsMouse && !forget.containsMouseish
-      text: brow.dev.connected ? "Disconnect" : brow.known ? "Connect" : "Pair"
-      fontFamily: root.bar.fontFamily
-    }
-
-    DeviceLine {
-      id: bcontent
-      anchors.left: parent.left
-      anchors.right: forget.visible ? forget.left : parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.margins: Style.space(10)
-      icon: Model.icon(Model.bluetoothKind(brow.dev))
-      name: Model.deviceLabel(brow.dev)
-      status: Model.bluetoothStatus(brow.dev, brow.pendingAction)
-      online: brow.dev.connected
-    }
-
-    PanelActionButton {
-      id: forget
-      property bool containsMouseish: false
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(6)
-      anchors.verticalCenter: parent.verticalCenter
-      visible: brow.known && (bmouse.containsMouse || containsMouseish)
-      iconText: "󰅙"
-      tooltipText: "Forget"
-      foreground: root.bar.foreground
-      fontFamily: root.bar.fontFamily
-      onHovered: function(h) { containsMouseish = h }
-      onClicked: root.btAction(brow.dev, "forget")
-    }
-  }
-
-  // ---------- Shared icon · name · status line ----------
-  component DeviceLine: Item {
-    property string icon: ""
-    property string name: ""
-    property string status: ""
-    property string trailing: ""
-    property bool online: true
-    implicitHeight: Math.max(lineIcon.implicitHeight, lineText.implicitHeight)
-
-    Text {
-      id: lineIcon
-      anchors.left: parent.left
-      anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(26)
-      text: parent.icon
-      color: parent.online ? root.bar.foreground : root.dimmed
-      font.family: root.bar.fontFamily
-      font.pixelSize: Style.font.heading
-    }
-
-    Column {
-      id: lineText
-      anchors.left: lineIcon.right
-      anchors.leftMargin: Style.space(8)
-      anchors.right: lineTrailing.left
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(1)
-
-      Text {
-        text: parent.parent.name
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.body
-        elide: Text.ElideRight
-        width: parent.width
-      }
-      Text {
-        visible: text !== ""
-        text: parent.parent.status
-        color: root.dimmed
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-        width: parent.width
-      }
-    }
-
-    Text {
-      id: lineTrailing
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      text: parent.trailing
-      color: root.dimmed
-      font.family: root.bar.fontFamily
-      font.pixelSize: Style.font.body
     }
   }
 }
