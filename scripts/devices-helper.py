@@ -7,13 +7,15 @@ reads one JSON command per line on stdin:
 
   {"cmd": "refresh"}
   {"cmd": "set", "serial": "92D3C1E9", "setting": "dpi", "value": "1600"}
-  {"cmd": "headset", "key": "sidetone", "value": 32}
+  {"cmd": "headset", "id": "0x046d:0x0aba", "key": "sidetone", "value": 32}
+  {"cmd": "mic", "id": "0x046d:0x0aba", "muted": true}   # correct the estimate
 
 Settings written here are remembered in $XDG_STATE_HOME/omarchy-devices and
 written again when a device wakes up or reconnects, because many Logitech
 devices forget them when they power off.
 """
 
+import glob
 import json
 import os
 import select
@@ -272,18 +274,127 @@ class Headsets:
         store_saved(self.saved)
 
 
+def usb_key(device_id):
+    """'0x046d:0x0aba' -> '046d:0aba'."""
+    return ":".join(part.lower().removeprefix("0x").zfill(4) for part in device_id.split(":"))
+
+
+class MuteWatcher:
+    """Estimates a headset's own mic mute from its button presses.
+
+    Some headsets mute inside the headset and never report the state. The
+    Logitech PRO X Wireless at least sends an empty consumer-control report
+    (01 00 00 00 00) on every mute press, but its volume wheel sends the same
+    empty report next to each volume key (01 01 / 01 02). So an empty report
+    counts as a mute press only when no volume key arrives within QUIET
+    seconds either side, and the result is only ever an estimate.
+    """
+
+    # USB ids whose mute button was verified to behave as described above.
+    SUPPORTED = {"046d:0aba"}
+    QUIET = 1.5
+    DEBOUNCE = 0.5
+
+    def __init__(self):
+        self.fds = {}  # fd -> usb key
+        self.muted = {}  # usb key -> bool
+        self.online = {}
+        self.last_volume = {}
+        self.last_empty = {}
+        self.candidate = {}  # usb key -> time of an unconfirmed press
+
+    def hidraw_nodes(self, key):
+        vendor, product = key.split(":")
+        want = f"0003:0000{vendor.upper()}:0000{product.upper()}"
+        for uevent in sorted(glob.glob("/sys/class/hidraw/hidraw*/device/uevent")):
+            try:
+                with open(uevent) as f:
+                    if f"HID_ID={want}" in f.read():
+                        yield "/dev/" + uevent.split("/")[4]
+            except OSError:
+                pass
+
+    def sync(self, headset_entries):
+        for entry in headset_entries:
+            key = usb_key(entry["id"])
+            if key not in self.SUPPORTED:
+                continue
+            if key not in self.fds.values():
+                for node in self.hidraw_nodes(key):
+                    try:
+                        self.fds[os.open(node, os.O_RDONLY | os.O_NONBLOCK)] = key
+                    except OSError as e:
+                        log(f"cannot watch {node} for mute presses: {e}")
+            # A headset that just powered on starts unmuted.
+            if entry["online"] and not self.online.get(key):
+                self.muted[key] = False
+                self.candidate.pop(key, None)
+            self.online[key] = entry["online"]
+
+    def decorate(self, devices):
+        for d in devices:
+            if d["source"] == "headset":
+                key = usb_key(d["id"])
+                if key in self.SUPPORTED and d["online"]:
+                    d["micHardwareMuted"] = self.muted.get(key, False)
+                    d["micEstimated"] = True
+                else:
+                    d.pop("micHardwareMuted", None)
+        return devices
+
+    def handle(self, fd):
+        key = self.fds[fd]
+        try:
+            data = os.read(fd, 64)
+        except OSError:
+            del self.fds[fd]  # dongle unplugged; sync reopens it
+            os.close(fd)
+            return
+        if not data or data[0] != 0x01:
+            return
+        now = time.monotonic()
+        if any(data[1:]):
+            self.last_volume[key] = now
+            self.candidate.pop(key, None)
+        elif now - self.last_volume.get(key, -1e9) >= self.QUIET \
+                and now - self.last_empty.get(key, -1e9) >= self.DEBOUNCE:
+            self.candidate[key] = now
+        if not any(data[1:]):
+            self.last_empty[key] = now
+
+    def next_deadline(self):
+        return min((t + self.QUIET for t in self.candidate.values()), default=None)
+
+    def expire(self):
+        """Confirm presses that stayed clear of volume keys; True if any did."""
+        now = time.monotonic()
+        changed = False
+        for key, t in list(self.candidate.items()):
+            if now - t >= self.QUIET:
+                del self.candidate[key]
+                self.muted[key] = not self.muted.get(key, False)
+                changed = True
+        return changed
+
+    def set(self, device_id, muted):
+        self.muted[usb_key(device_id)] = bool(muted)
+
+
 def main():
     saved = load_saved()
     logitech = Logitech(saved)
     headsets = Headsets(saved)
+    mute = MuteWatcher()
     state = {"type": "state", "devices": [], "errors": []}
 
     def publish(full):
-        devices = headsets.poll() + logitech.poll(full)
+        headset_entries = headsets.poll()
+        mute.sync(headset_entries)
+        devices = headset_entries + logitech.poll(full)
         # Solaar also sees some headsets; headsetcontrol knows them better.
         if any(d["source"] == "headset" for d in devices):
             devices = [d for d in devices if not (d["source"] == "logitech" and d["kind"] == "headset")]
-        state["devices"] = devices
+        state["devices"] = mute.decorate(devices)
         state["errors"] = [e for e in [logitech.error] if e]
         if not headsets.binary:
             state["errors"].append("headsetcontrol is not installed")
@@ -292,14 +403,30 @@ def main():
     publish(full=True)
     last_poll = time.monotonic()
     while True:
-        timeout = max(0.0, POLL_SECONDS - (time.monotonic() - last_poll))
-        ready, _, _ = select.select([sys.stdin], [], [], timeout)
-        if ready:
+        now = time.monotonic()
+        timeout = max(0.0, POLL_SECONDS - (now - last_poll))
+        deadline = mute.next_deadline()
+        if deadline is not None:
+            timeout = max(0.0, min(timeout, deadline - now))
+        ready, _, _ = select.select([sys.stdin, *mute.fds], [], [], timeout)
+        for fd in ready:
+            if fd is not sys.stdin:
+                mute.handle(fd)
+        if mute.expire():
+            state["devices"] = mute.decorate(state["devices"])
+            emit(state)
+        if sys.stdin in ready:
             line = sys.stdin.readline()
             if not line:
                 return  # the shell closed our stdin: exit with it
             try:
                 cmd = json.loads(line)
+                if cmd.get("cmd") == "mic":
+                    # A correction from the panel: no device round-trip needed.
+                    mute.set(cmd["id"], cmd["muted"])
+                    state["devices"] = mute.decorate(state["devices"])
+                    emit(state)
+                    continue
                 if cmd.get("cmd") == "set":
                     logitech.set(cmd["serial"], cmd["setting"], cmd["value"])
                 elif cmd.get("cmd") == "headset":
@@ -310,7 +437,7 @@ def main():
             except Exception as e:
                 emit({"type": "error", "message": str(e)})
             last_poll = time.monotonic()
-        else:
+        elif not ready and time.monotonic() - last_poll >= POLL_SECONDS:
             publish(full=False)
             last_poll = time.monotonic()
 

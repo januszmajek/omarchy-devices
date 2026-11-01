@@ -66,6 +66,13 @@ Item {
     return map
   }
 
+  // The headset-button state is estimated from presses; let the user put it
+  // right when it drifts.
+  function correctHeadsetMute(device) {
+    if (!device || !device.mic) return
+    send({ cmd: "mic", id: device.id, muted: !(device.mic.hardwareMuted === true) })
+  }
+
   function toggleSystemMic(device) {
     var node = headsetSources[device.id]
     if (node && node.audio) node.audio.muted = !node.audio.muted

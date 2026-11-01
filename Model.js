@@ -49,7 +49,9 @@ function mergeDevices(helperDevices, btDevices, micStates) {
   for (var i = 0; i < helperDevices.length; i++) {
     var h = Object.assign({}, helperDevices[i])
     h.mic = micStates[h.id] || null
-    if (h.mic && h.micHardwareMuted !== undefined) h.mic.hardwareMuted = h.micHardwareMuted
+    if (h.mic && h.micHardwareMuted !== undefined) {
+      h.mic = Object.assign({}, h.mic, { hardwareMuted: h.micHardwareMuted, estimated: !!h.micEstimated })
+    }
     list.push(h)
   }
   for (var j = 0; j < btDevices.length; j++) {
@@ -118,10 +120,11 @@ function micText(mic) {
   if (mic.hardwareMuted === undefined || mic.hardwareMuted === null)
     return sys ? "Mic muted (system)" : "Mic on (system)"
   var hw = mic.hardwareMuted === true
-  if (hw && sys) return "Mic muted · headset button + system"
-  if (hw) return "Mic muted · headset button"
+  var est = mic.estimated ? " (est.)" : ""
+  if (hw && sys) return "Mic muted · headset button" + est + " + system"
+  if (hw) return "Mic muted · headset button" + est
   if (sys) return "Mic muted · system"
-  return "Mic live"
+  return "Mic live" + est
 }
 
 function micMuted(mic) {

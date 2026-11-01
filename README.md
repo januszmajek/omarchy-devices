@@ -52,11 +52,21 @@ Move it on the bar with `omarchy bar move januszmajek.devices --section right`.
 
 ### Headset microphone
 
-For an online USB headset the panel shows whether its microphone is muted.
-The system mute (PipeWire) is always shown. Many headsets — the Logitech PRO X
-Wireless among them — mute inside the headset when you press the button or
-flip the boom and never tell the computer, so for those the panel reads
-"Mic on (system)" rather than claiming the mic is live.
+For an online USB headset the panel shows whether its microphone is muted:
+by the headset's own button, in the system (PipeWire), or both.
+
+The system mute is always exact. The headset button is harder: many headsets
+mute inside the headset and never tell the computer. The Logitech PRO X
+Wireless does send an empty media-key report on every mute press, but its
+volume wheel sends the same empty report next to each volume step, so a press
+is counted only when no volume step happens within 1.5 seconds of it. The
+result is an estimate, marked "(est.)": it starts unmuted whenever the headset
+powers on, and if it is ever wrong, click the mic line to flip it.
+
+Only headsets whose button has been checked this way get the estimate
+(currently the PRO X Wireless, `046d:0aba`; its power button was not tested).
+Other headsets show the system mute alone, as "Mic on (system)" or
+"Mic muted (system)".
 
 ### Saved settings
 
