@@ -52,21 +52,20 @@ Move it on the bar with `omarchy bar move januszmajek.devices --section right`.
 
 ### Headset microphone
 
-For an online USB headset the panel shows whether its microphone is muted:
-by the headset's own button, in the system (PipeWire), or both.
+For an online USB headset the panel shows whether its microphone is muted in
+the system (PipeWire). Click the mic line to mute or unmute it.
 
-The system mute is always exact. The headset button is harder: many headsets
-mute inside the headset and never tell the computer. The Logitech PRO X
-Wireless does send an empty media-key report on every mute press, but its
-volume wheel sends the same empty report next to each volume step, so a press
-is counted only when no volume step happens within 1.5 seconds of it. The
-result is an estimate, marked "(est.)": it starts unmuted whenever the headset
-powers on, and if it is ever wrong, click the mic line to flip it.
+On the Logitech PRO X Wireless (`046d:0aba`) the mute button works inside
+the headset. The headset's USB audio mute control follows the button, but
+the headset never tells the computer when it changes, so the system keeps
+showing the state it read last. The panel marks such headsets with "button
+not reported"; the red mark on the button shows whether the button has muted
+the mic. Muting from the system also seems to act on the headset (it plays
+its mute sound), but whether both share one switch has not been fully
+verified.
 
-Only headsets whose button has been checked this way get the estimate
-(currently the PRO X Wireless, `046d:0aba`; its power button was not tested).
-Other headsets show the system mute alone, as "Mic on (system)" or
-"Mic muted (system)".
+Reading the mute control directly works, but only with the audio driver
+detached, which cuts the headset's sound, so the plugin does not do it.
 
 ### Saved settings
 

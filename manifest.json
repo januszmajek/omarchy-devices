@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "januszmajek.devices",
   "name": "Devices",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "Janusz Majek",
   "description": "Battery and settings for wireless mice, keyboards, headsets and controllers: Bluetooth, Logitech Bolt/Unifying receivers and USB headset dongles",
   "kinds": ["service", "bar-widget"],

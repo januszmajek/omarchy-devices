@@ -250,31 +250,29 @@ Panel {
           }
           Text {
             id: micLine
-            readonly property bool estimated: !!drow.dev.mic && drow.dev.mic.estimated === true
             visible: drow.dev.online && !!drow.dev.mic
             text: (Model.micMuted(drow.dev.mic) ? Model.icon("micOff") : Model.icon("mic")) + " " + Model.micText(drow.dev.mic)
             color: Model.micMuted(drow.dev.mic) ? root.bar.urgent : root.dimmed
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
-            font.underline: estimated && micMouse.containsMouse
+            font.underline: micMouse.containsMouse
             elide: Text.ElideRight
             width: parent.width
 
             // Sits above the row's own MouseArea, so clicking the mic line
-            // corrects the estimate instead of expanding the row.
+            // toggles the mute instead of expanding the row.
             MouseArea {
               id: micMouse
-              enabled: micLine.estimated
               width: Math.min(parent.width, parent.implicitWidth)
               height: parent.height
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.service.correctHeadsetMute(drow.dev)
+              onClicked: root.service.toggleSystemMic(drow.dev)
             }
 
             PanelToolTip {
               visible: micMouse.containsMouse
-              text: "The headset does not report its mute button, so this is counted from button presses. Click if it is wrong."
+              text: Model.micTooltip(drow.dev.mic)
               fontFamily: root.bar.fontFamily
             }
           }

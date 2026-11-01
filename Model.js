@@ -48,10 +48,7 @@ function mergeDevices(helperDevices, btDevices, micStates) {
   var list = []
   for (var i = 0; i < helperDevices.length; i++) {
     var h = Object.assign({}, helperDevices[i])
-    h.mic = micStates[h.id] || null
-    if (h.mic && h.micHardwareMuted !== undefined) {
-      h.mic = Object.assign({}, h.mic, { hardwareMuted: h.micHardwareMuted, estimated: !!h.micEstimated })
-    }
+    h.mic = micStates[h.id] ? Object.assign({}, micStates[h.id], { buttonUnreported: !!h.micButtonUnreported }) : null
     list.push(h)
   }
   for (var j = 0; j < btDevices.length; j++) {
@@ -110,25 +107,24 @@ function status(dev) {
   return parts.length ? parts.join(" · ") : "Connected"
 }
 
-// Muted by the headset button, in the system, both, or live. Many headsets
-// (the Logitech PRO X Wireless among them) mute inside the headset without
-// telling the computer; then hardwareMuted is undefined and only the system
-// state is claimed.
+// The system (PipeWire) mute. On headsets like the PRO X Wireless the mute
+// button acts inside the headset without telling the computer, so the line
+// says the button is not reported instead of guessing.
 function micText(mic) {
   if (!mic) return ""
-  var sys = mic.systemMuted === true
-  if (mic.hardwareMuted === undefined || mic.hardwareMuted === null)
-    return sys ? "Mic muted (system)" : "Mic on (system)"
-  var hw = mic.hardwareMuted === true
-  var est = mic.estimated ? " (est.)" : ""
-  if (hw && sys) return "Mic muted · headset button" + est + " + system"
-  if (hw) return "Mic muted · headset button" + est
-  if (sys) return "Mic muted · system"
-  return "Mic live" + est
+  var text = mic.systemMuted === true ? "System: mic muted" : "System: mic on"
+  return mic.buttonUnreported ? text + " · button not reported" : text
+}
+
+function micTooltip(mic) {
+  if (mic && mic.buttonUnreported)
+    return "The headset does not report its mute button, so this shows only the system mute. "
+      + "The red mark on the button shows whether the button has muted the mic. Click to mute or unmute in the system."
+  return "Click to mute or unmute the microphone."
 }
 
 function micMuted(mic) {
-  return !!mic && (mic.hardwareMuted === true || mic.systemMuted === true)
+  return !!mic && mic.systemMuted === true
 }
 
 // One line: the bar's tooltip window does not grow for multi-line text.

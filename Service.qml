@@ -40,8 +40,8 @@ Item {
 
   // ---------- Headset microphone ----------
 
-  // The PipeWire capture node of each online helper headset, so its system
-  // mute can be shown next to the headset's own mute button.
+  // The PipeWire capture node of each online helper headset, whose mute is
+  // the microphone state shown and toggled in the panel.
   readonly property var headsetSources: {
     var map = {}
     for (var i = 0; i < helperDevices.length; i++) {
@@ -64,13 +64,6 @@ Item {
       map[id] = { systemMuted: !!(node.audio && node.audio.muted), nodeId: node.id }
     }
     return map
-  }
-
-  // The headset-button state is estimated from presses; let the user put it
-  // right when it drifts.
-  function correctHeadsetMute(device) {
-    if (!device || !device.mic) return
-    send({ cmd: "mic", id: device.id, muted: !(device.mic.hardwareMuted === true) })
   }
 
   function toggleSystemMic(device) {
